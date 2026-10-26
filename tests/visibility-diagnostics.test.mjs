@@ -18,12 +18,17 @@ test("a real check error survives normal switching and a process restart", async
     error: "navigation unavailable",
     totalMs: 12000,
   });
-  for (let i = 0; i < 250; i++)
+  for (let i = 0; i < 250; i++) {
     log.record({
       event: "check",
       reason: i % 2 ? "session-resolved" : "unsupported-app",
       visible: !!(i % 2),
     });
+    log.record({
+      event: "window-hide",
+      state: { expectedVisible: true, actualVisible: true, manual: false },
+    });
+  }
   await log.flush();
   const next = await createVisibilityDiagnostics(file);
   next.record({ event: "startup", pid: 22 });

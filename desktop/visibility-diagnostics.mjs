@@ -71,9 +71,6 @@ function clean(value, depth = 0) {
 function problem(event) {
   return (
     !!event.error ||
-    (event.event === "window-hide" &&
-      event.state?.expectedVisible &&
-      !event.state.manual) ||
     /failed|gone|unresponsive|stalled|mismatch|outer-error/.test(
       `${event.event || ""} ${event.reason || ""}`,
     ) ||

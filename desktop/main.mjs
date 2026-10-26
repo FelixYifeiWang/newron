@@ -1019,7 +1019,17 @@ if (!lock) {
             supported: decision.supported,
             reason: decision.reason,
             error: decision.error,
-            target: decision.target,
+            target: decision.target && [
+              decision.target.bundleId,
+              decision.target.pid,
+              decision.target.windowCount,
+              decision.target.bounds?.x,
+              decision.target.bounds?.y,
+              decision.target.bounds?.width,
+              decision.target.bounds?.height,
+              decision.target.point?.x,
+              decision.target.point?.y,
+            ],
             visible,
           });
           if (key !== lastVisibilityDecision || totalMs > 5000) {

@@ -165,3 +165,25 @@ test("large navigation logs still resolve the current session", async (t) => {
   );
   assert.equal(await readOpenConversation(target, root), b);
 });
+
+// Reproduces the captured live sequence: navigation emitted only an owner-route
+// update; a later browser helper advertised itself as the primary thread.
+test("owner-route navigation updates the active task before an unindexed browser helper arrives", () => {
+  const c = "33333333-3333-4333-8333-333333333333";
+  const raw = [event(a), route(a), route(b), helper(c), event(c)].join("\n");
+  assert.equal(activeConversation(raw, 0, new Set([a, b])), b);
+});
+test("a current owner-route corrects a helper that already displaced an older task", () => {
+  const c = "33333333-3333-4333-8333-333333333333";
+  const raw = [event(a), route(a), helper(c), event(c), route(b)].join("\n");
+  assert.equal(activeConversation(raw, 0, new Set([a, b])), b);
+});
+test("closing the routed task still clears it and cannot reconnect its previous task", () => {
+  const raw = [event(a), route(a), route(b), event(b, "active=false")].join(
+    "\n",
+  );
+  assert.throws(
+    () => activeConversation(raw, 0, new Set([a, b])),
+    /Open the conversation/,
+  );
+});

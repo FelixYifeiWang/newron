@@ -32,11 +32,20 @@ export function activeConversation(
       const route = /^\/local\/([0-9a-f-]{36})(?:[?#]|$)/i.exec(
         fields.ownerRoutePath || "",
       );
-      if (/^\d+$/.test(fields.windowId || ""))
-        routes.set(
-          fields.windowId,
-          route && uuid.test(route[1]) ? route[1] : null,
-        );
+      if (/^\d+$/.test(fields.windowId || "")) {
+        const window = fields.windowId;
+        const routed = route && uuid.test(route[1]) ? route[1] : null;
+        routes.set(window, routed);
+        // New Codex builds can navigate with owner-route events alone. Keep the
+        // already-active window in sync, or a subsequent helper stream can
+        // displace the real task because it no longer matches the routed task.
+        // Never reactivate a closed window or choose the last known task for a
+        // home/cloud/unindexed route. Exact index validation still follows.
+        if (windows.has(window)) {
+          if (routed) windows.set(window, routed);
+          else windows.delete(window);
+        }
+      }
       continue;
     }
     if (
