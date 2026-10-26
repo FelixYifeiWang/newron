@@ -19,7 +19,8 @@ const TERMINALS = new Set([
 export function placementHint(target) {
   if (!target?.error && SUPPORTED_APPS.has(target?.bundleId)) return "";
   if (TERMINALS.has(target?.bundleId))
-    return "Nox can't read terminals yet. Use the Claude app's Code tab or Codex.";
+    // Claude Code in a terminal connects from Newron's Connect a session prompt instead.
+    return "In a terminal? In Newron, go to Settings, then Connect a session.";
   return "Move Nox onto a Codex chat or the Claude app's Code tab.";
 }
 // Nox's panel opens on every click or hover: Set up when unpaired, Connect over a session, otherwise a hint.

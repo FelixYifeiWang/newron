@@ -98,7 +98,10 @@ test("Nox says where to go when it isn't over a session it can read", () => {
     "com.googlecode.iterm2",
     "com.microsoft.VSCode",
   ])
-    assert.match(placementHint({ bundleId: terminal }), /terminals/);
+    assert.match(
+      placementHint({ bundleId: terminal }),
+      /Settings, then Connect a session/,
+    );
 });
 
 test("a click or hover always opens Nox's panel with something to do or read", () => {
