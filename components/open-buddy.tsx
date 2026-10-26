@@ -51,6 +51,11 @@ export function OpenBuddy({ onSetup }: { onSetup: () => void }) {
               ? "Allow your browser to open Nox. Starting up may take a few seconds."
               : "Nothing appeared? Try again, or set up Nox."}
           </p>
+          {!opening && (
+            <a className="nox-launch-report text-button" href="/report">
+              Still stuck? Report a problem
+            </a>
+          )}
           <div className="nox-launch-actions">
             <button
               className="text-button"

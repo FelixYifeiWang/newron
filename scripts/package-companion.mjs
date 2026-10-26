@@ -26,6 +26,7 @@ for (const file of [
   "update.mjs",
   "media-tools.mjs",
   "artifact-region.mjs",
+  "problem-report.mjs",
   "connect.mjs",
   "drag.mjs",
   "visibility.mjs",

@@ -144,5 +144,9 @@ export async function createVisibilityDiagnostics(
     async flush() {
       while (writing) await writing;
     },
+    // The kept problem history, for Report a problem (already limited to explicit diagnostic fields).
+    problems() {
+      return data.problems.map((row) => ({ ...row }));
+    },
   };
 }

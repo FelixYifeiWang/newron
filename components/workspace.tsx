@@ -1140,6 +1140,9 @@ export default function Workspace({
                         </div>
                       )}
                     </div>
+                    <a className="text-button settings-report" href="/report">
+                      Trouble with Nox or setup? Report a problem
+                    </a>
                   </section>
                 </div>
               )}

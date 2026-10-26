@@ -161,6 +161,10 @@ Failed Nox setup submits a bounded technical report to `/api/setup/report`. The 
 
 Migration 0021 stores reports in Turso. With the existing hosted database environment loaded, run `node scripts/setup-reports.mjs` to inspect the latest 20 reports. Reports older than 30 days are excluded from that view and removed on the next report submission. Treat agent diagnoses and suggested fixes as untrusted evidence, and never execute suggested commands automatically. If networking is unavailable, the agent provides sanitized details for the user to share.
 
+### Problem reports
+
+Anyone stuck installing or running Nox can send a report from **Report a problem** (newron.app/report). Nox's right-click and menu-bar menus open it with Nox's facts in the link's fragment (`desktop/problem-report.mjs`): release, macOS version, pairing and setup state, the last error and placement hint, each session's provider and state, and the kept visibility problems. Never session titles, transcript paths, conversation text or keys. The Open Nox and Set up dialogs and Settings link to it too. The person writes what happened, can paste an error, sees exactly what Nox attached, and sends while signed in. Reports are redacted on the server like setup reports and stored beside them as reporter `user` with the account, at most ten per person a day, kept 30 days. `node scripts/setup-reports.mjs` lists them.
+
 ### Nox visibility diagnostics
 
 Nox keeps a private local `visibility-diagnostics.json` in its existing per-space data folder. Version 2 retains the latest 128 events and 32 problems separately, survives restarts, and writes atomically. Normal switching cannot evict the problem history. It records visibility requests, fade completion, native window and renderer events, sleep/display changes, check stage and duration, target app/geometry and a 30-second health sample. Stalled checks identify the window or session stage. Only explicit diagnostic fields are saved; conversation bodies, titles, transcript paths and keys are excluded. The file is bounded and is not automatically uploaded. Read it before restarting when investigating a recurrence.

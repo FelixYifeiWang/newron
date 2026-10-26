@@ -9426,3 +9426,72 @@ a[href].gm-detail.gm-commit b::after {
   font-size: 12px;
   margin-top: 16px;
 }
+/* Report a problem (app/report): the setup dialog's card on its own page. */
+.report-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 32px 16px;
+  background: #fff;
+}
+.report-card {
+  width: min(100%, 440px);
+  padding: 32px;
+  border: 1px solid #e7e7e7;
+  border-radius: 22px;
+}
+.report-card h1 {
+  margin: 0 0 12px;
+  font-family: var(--sans);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.5px;
+}
+.report-lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #666;
+}
+.report-card .button.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.report-nox summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: #7b7b7b;
+}
+.report-nox pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #e3e3e3;
+  border-radius: 5px;
+  background: #fafafa;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #686868;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.setup-dialog a.setup-alternative,
+.nox-launch-report {
+  display: block;
+  width: fit-content;
+  margin: 14px auto 0;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+.settings-report {
+  display: inline-block;
+  margin-top: 16px;
+  font-size: 12px;
+  color: #8a8a8a;
+}

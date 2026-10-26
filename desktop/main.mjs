@@ -47,6 +47,7 @@ import {
 } from "./drag.mjs";
 const exec = promisify(execFile);
 import { createVisibilityDiagnostics } from "./visibility-diagnostics.mjs";
+import { noxReport, reportLink } from "./problem-report.mjs";
 let visibilityDiagnostics;
 function recordVisibility(event, detail = {}) {
   const exists = win && !win.isDestroyed();
@@ -355,6 +356,28 @@ function applyVisibility(visible) {
     }
   }, 16);
 }
+// Report a problem opens Newron's report page with Nox's facts in the link's fragment; nothing is sent until
+// the person reads it there and chooses Send (desktop/problem-report.mjs).
+function reportProblem() {
+  const site =
+    ORIGIN === "https://commonplace-pearl.vercel.app"
+      ? "https://newron.app"
+      : ORIGIN;
+  const report = noxReport({
+    release: path.basename(path.dirname(__dirname)).slice(0, 12),
+    version: app.getVersion(),
+    os: `macOS ${process.getSystemVersion()}`,
+    arch: process.arch,
+    paired: !!connection,
+    setupPending,
+    status,
+    lastError,
+    hint: candidateHint,
+    subscriptions,
+    problems: visibilityDiagnostics?.problems() || [],
+  });
+  void shell.openExternal(reportLink(site, report));
+}
 function buddyMenu() {
   return Menu.buildFromTemplate([
     { label: "Hide Nox", click: hideBuddy },
@@ -367,6 +390,7 @@ function buddyMenu() {
             : ORIGIN,
         ),
     },
+    { label: "Report a problem…", click: reportProblem },
     { type: "separator" },
     { label: "Quit and stop syncing", click: () => app.quit() },
   ]);
@@ -1224,6 +1248,7 @@ if (!lock) {
                   : ORIGIN,
               ),
           },
+          { label: "Report a problem…", click: reportProblem },
           { type: "separator" },
           { label: "Quit and stop syncing", click: () => app.quit() },
         ]),

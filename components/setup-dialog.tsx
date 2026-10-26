@@ -212,6 +212,12 @@ export function SetupDialog({
               "Codex · Claude Code · Cursor"
             )}
           </p>
+          <a
+            className="setup-alternative text-button"
+            href={`/report?from=${mode === "setup" ? "setup" : "other"}`}
+          >
+            Having trouble? Report a problem
+          </a>
         </>
       )}
       {error && (
