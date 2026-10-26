@@ -46,7 +46,7 @@ test("unknown inspection results cannot cause flicker or unhide a hidden buddy",
 test("an unavailable inspector is unknown, not an unsupported app", async () => {
   const { inspectVisibility } = await import("../desktop/visibility.mjs");
   for (const inspect of [
-    async () => ({ error: "no-target" }),
+    async () => ({ error: "inspection-unavailable" }),
     async () => {
       throw new Error("timeout");
     },
@@ -89,4 +89,14 @@ test("unsupported samples separated by unknown results are not consecutive misse
   policy.update({ supported: null });
   assert.equal(policy.update({ supported: false }), true);
   assert.equal(policy.update({ supported: false }), false);
+});
+
+test("a confirmed empty desktop remains unsupported", async () => {
+  const { inspectVisibility } = await import("../desktop/visibility.mjs");
+  const result = await inspectVisibility({
+    inspect: async () => ({ error: "no-target" }),
+    resolve: async () => assert.fail("No session"),
+    supportedApps: new Set(["codex"]),
+  });
+  assert.equal(result.supported, false);
 });

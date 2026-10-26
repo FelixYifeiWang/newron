@@ -50,6 +50,8 @@ export async function inspectVisibility({ inspect, resolve, supportedApps }) {
       error: diagnosticError(error),
     };
   }
+  if (target.error === "no-target")
+    return { supported: false, reason: "no-window" };
   if (target.error || !target.bundleId)
     return { supported: null, reason: "window-unavailable" };
   const bundleId = target.bundleId;
