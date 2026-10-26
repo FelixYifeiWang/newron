@@ -29,7 +29,12 @@ import { promisify } from "node:util";
 import { resolveLocalTarget } from "./target.mjs";
 import { claudeProjectSource } from "./claude.mjs";
 import { consumeSetupRequest, consumeShowRequest } from "./setup-inbox.mjs";
-import { connectSession, SUPPORTED_APPS } from "./connect.mjs";
+import {
+  connectSession,
+  placementHint,
+  showsControls,
+  SUPPORTED_APPS,
+} from "./connect.mjs";
 import {
   createDragController,
   createHoverController,
@@ -243,6 +248,8 @@ async function tick() {
 const buddyOffsetY = 54;
 let candidate = null,
   candidateConnected = false,
+  // What to do when no session is under Nox (where to move it, or why it couldn't look).
+  candidateHint = "",
   connecting = false;
 function anchorPoint() {
   const b = win.getBounds();
@@ -254,16 +261,22 @@ function setExpanded(value) {
 }
 function notifyBuddy() {
   stateRevision++;
-  const visible =
-    expanded && !!candidate && !dragController?.hasMoved() && win?.isVisible();
+  const visible = showsControls({
+    expanded,
+    moved: !!dragController?.hasMoved(),
+    visible: !!win?.isVisible(),
+    paired: !!connection,
+    setupPending,
+    candidate,
+    hint: candidateHint,
+  });
   if (controlsWindow && !controlsWindow.isDestroyed()) {
     if (visible && controlsReady) {
       const point = anchorPoint(),
         area = screen.getDisplayNearestPoint(point).workArea;
-      controlsWindow.setBounds(
-        buddyControlsBounds(point, favorites.length, area),
-        false,
-      );
+      // Favorites show beside a session; a hint may take two lines.
+      const rows = candidate ? favorites.length : candidateHint ? 1 : 0;
+      controlsWindow.setBounds(buddyControlsBounds(point, rows, area), false);
       controlsWindow.showInactive();
     } else controlsWindow.hide();
     controlsWindow.webContents.send("companion:state", buddySnapshot());
@@ -375,6 +388,7 @@ function buddySnapshot() {
     dragging: dragController?.hasMoved() || false,
     buddyOffsetY,
     candidateTitle: candidate?.title || "",
+    candidateHint,
     candidateConnected,
     connecting,
     connected: !!connection,
@@ -416,6 +430,7 @@ async function findCandidate() {
       if (revision === candidateRevision) {
         candidate = null;
         candidateConnected = false;
+        candidateHint = placementHint(target);
       }
       return;
     }
@@ -439,12 +454,14 @@ async function findCandidate() {
     ) {
       candidate = found;
       candidateConnected = connected;
+      candidateHint = "";
     }
   } catch (e) {
     if (revision === candidateRevision) {
       lastError = e.message;
       candidate = null;
       candidateConnected = false;
+      candidateHint = e.message;
     }
   } finally {
     notifyBuddy();
@@ -454,6 +471,7 @@ async function toggleControls() {
   candidateRevision++;
   candidate = null;
   candidateConnected = false;
+  candidateHint = "";
   setExpanded(true);
   if (expanded && connection)
     await Promise.all([findCandidate(), refreshFavorites()]);

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buddyBounds } from "../desktop/drag.mjs";
-import { connectSession } from "../desktop/connect.mjs";
+import {
+  connectSession,
+  placementHint,
+  showsControls,
+} from "../desktop/connect.mjs";
 test("expanding near an edge keeps the buddy anchor fixed", () => {
   const anchor = { x: 900, y: 740 },
     area = { x: 0, y: 0, width: 1024, height: 800 },
@@ -72,5 +76,55 @@ test("restored connection reports recovery before capture and resumes only after
   assert.ok(
     events.findIndex((v) => v.state === "capture") <
       events.findIndex((v) => v.state === "following"),
+  );
+});
+
+test("Nox says where to go when it isn't over a session it can read", () => {
+  assert.equal(placementHint({ bundleId: "com.openai.codex" }), "");
+  assert.equal(
+    placementHint({ bundleId: "com.anthropic.claudefordesktop" }),
+    "",
+  );
+  assert.match(
+    placementHint({ error: "no-target" }),
+    /Codex chat or the Claude app's Code tab/,
+  );
+  assert.match(
+    placementHint({ bundleId: "com.apple.Safari" }),
+    /Codex chat or the Claude app's Code tab/,
+  );
+  for (const terminal of [
+    "com.apple.Terminal",
+    "com.googlecode.iterm2",
+    "com.microsoft.VSCode",
+  ])
+    assert.match(placementHint({ bundleId: terminal }), /terminals/);
+});
+
+test("a click or hover always opens Nox's panel with something to do or read", () => {
+  const open = { expanded: true, moved: false, visible: true };
+  assert.equal(showsControls({ ...open, paired: false }), true, "Set up");
+  assert.equal(
+    showsControls({ ...open, paired: true, setupPending: true }),
+    true,
+  );
+  assert.equal(
+    showsControls({ ...open, paired: true, candidate: { title: "Chat" } }),
+    true,
+  );
+  assert.equal(
+    showsControls({ ...open, paired: true, hint: "Move Nox" }),
+    true,
+  );
+  // Still looking under Nox: nothing yet, so the panel never flashes a hint.
+  assert.equal(showsControls({ ...open, paired: true }), false);
+  assert.equal(
+    showsControls({ ...open, expanded: false, paired: false }),
+    false,
+  );
+  assert.equal(showsControls({ ...open, moved: true, paired: false }), false);
+  assert.equal(
+    showsControls({ ...open, visible: false, paired: false }),
+    false,
   );
 });

@@ -6,6 +6,7 @@ type State = {
   connected?: boolean;
   setupPending?: boolean;
   candidateTitle: string;
+  candidateHint?: string;
   candidateConnected: boolean;
   connecting: boolean;
   expanded: boolean;
@@ -38,10 +39,20 @@ export default function Controls() {
     const timer = setTimeout(() => setCopied(""), 1800);
     return () => clearTimeout(timer);
   }, [copied]);
-  if (!state?.candidateTitle || !state.expanded) return null;
+  if (!state?.expanded) return null;
+  const needsSetup = state.connected === false || !!state.setupPending;
+  // No session under Nox: say where to move it rather than showing nothing.
+  if (!state.candidateTitle && !needsSetup)
+    return state.candidateHint ? (
+      <div className="buddy-controls" aria-label="Session controls">
+        <p className="buddy-hint" role="status">
+          {state.candidateHint}
+        </p>
+      </div>
+    ) : null;
   return (
     <div className="buddy-controls" aria-label="Session controls">
-      {(state.favorites || []).map((collection) => (
+      {(state.candidateTitle ? state.favorites || [] : []).map((collection) => (
         <button
           key={collection.id}
           className="buddy-reference"
@@ -73,7 +84,12 @@ export default function Controls() {
       ))}
       <button
         className="native-connect"
-        title={error || state.candidateTitle}
+        title={
+          error ||
+          (state.connected === false
+            ? "Open Newron to set up Nox."
+            : state.candidateTitle)
+        }
         disabled={
           state.setupPending || state.connecting || state.candidateConnected
         }

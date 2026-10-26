@@ -6557,6 +6557,20 @@ body.desktop-feedback-page {
   background: #f5f5f5;
   border-color: #aaa;
 }
+/* Where to move Nox, when no session it can read is under it. */
+.buddy-hint {
+  max-width: 208px;
+  margin: 0;
+  padding: 7px 12px;
+  border: 1px solid #ddd;
+  border-radius: 14px;
+  background: #fff;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+  color: #555;
+  box-shadow: 0 2px 5px #00000008;
+}
 .buddy-control-error {
   position: absolute;
   inset: 4px 6px auto;
