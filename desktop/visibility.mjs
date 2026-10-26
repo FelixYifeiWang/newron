@@ -39,34 +39,67 @@ export function createVisibilityPolicy({ now = Date.now } = {}) {
 }
 
 // Only a positively identified unsupported app is evidence for hiding.
-export async function inspectVisibility({ inspect, resolve, supportedApps }) {
+export async function inspectVisibility({
+  inspect,
+  resolve,
+  supportedApps,
+  onStage = () => {},
+}) {
+  const began = Date.now();
   let target;
+  let windowMs = 0;
+  let sessionBegan = 0;
+  const finish = (result) => ({
+    ...result,
+    target: target && {
+      bundleId: target.bundleId,
+      pid: target.pid,
+      windowCount: target.windowCount,
+      launchedAt: target.launchedAt,
+      bounds: target.bounds,
+      point: target.point,
+    },
+    windowMs,
+    sessionMs: sessionBegan ? Date.now() - sessionBegan : 0,
+    totalMs: Date.now() - began,
+  });
   try {
+    onStage("window");
     target = await inspect();
+    windowMs = Date.now() - began;
   } catch (error) {
-    return {
+    windowMs = Date.now() - began;
+    return finish({
       supported: null,
       reason: "window-check-failed",
       error: diagnosticError(error),
-    };
+      errorCode: error.code || error.name,
+    });
   }
   if (target.error === "no-target")
-    return { supported: false, reason: "no-window" };
+    return finish({ supported: false, reason: "no-window" });
   if (target.error || !target.bundleId)
-    return { supported: null, reason: "window-unavailable" };
+    return finish({
+      supported: null,
+      reason: "window-unavailable",
+      errorCode: target.error,
+    });
   const bundleId = target.bundleId;
   if (!supportedApps.has(bundleId))
-    return { supported: false, reason: "unsupported-app", bundleId };
+    return finish({ supported: false, reason: "unsupported-app", bundleId });
   try {
+    sessionBegan = Date.now();
+    onStage("session");
     await resolve(target);
-    return { supported: true, reason: "session-resolved", bundleId };
+    return finish({ supported: true, reason: "session-resolved", bundleId });
   } catch (error) {
-    return {
+    return finish({
       supported: null,
       reason: "session-check-failed",
       bundleId,
       error: diagnosticError(error),
-    };
+      errorCode: error.code || error.name,
+    });
   }
 }
 function diagnosticError(error) {

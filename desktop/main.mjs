@@ -12,6 +12,7 @@ import {
   dialog,
   clipboard,
   session,
+  powerMonitor,
 } from "electron";
 import path from "node:path";
 import { createMediaTools } from "./media-tools.mjs";
@@ -40,6 +41,29 @@ import {
   createBuddyHitTest,
 } from "./drag.mjs";
 const exec = promisify(execFile);
+import { createVisibilityDiagnostics } from "./visibility-diagnostics.mjs";
+let visibilityDiagnostics;
+function recordVisibility(event, detail = {}) {
+  const exists = win && !win.isDestroyed();
+  visibilityDiagnostics?.record({
+    event,
+    pid: process.pid,
+    revision: visibilityRevision,
+    state: {
+      expectedVisible: desiredVisible,
+      actualVisible: !!exists && win.isVisible(),
+      opacity: exists ? win.getOpacity() : 0,
+      appHidden: app.isReady() && app.isHidden(),
+      manual: visibility.isManual(),
+      bounds: exists ? win.getBounds() : null,
+      loading:
+        !!exists &&
+        !win.webContents.isDestroyed() &&
+        win.webContents.isLoadingMainFrame(),
+    },
+    ...detail,
+  });
+}
 const visibility = createVisibilityPolicy();
 let visibilityRevision = 0,
   visibilityFade,
@@ -248,6 +272,7 @@ function notifyBuddy() {
     win.webContents.send("companion:state", buddySnapshot());
 }
 function showBuddy() {
+  recordVisibility("show-request");
   visibility.reveal();
   desiredVisible = true;
   visibilityRevision++;
@@ -270,6 +295,7 @@ function showBuddy() {
   notifyBuddy();
 }
 function hideBuddy() {
+  recordVisibility("manual-hide-request");
   visibility.hide();
   desiredVisible = false;
   visibilityRevision++;
@@ -284,6 +310,7 @@ function hideBuddy() {
 function applyVisibility(visible) {
   if (!win || win.isDestroyed()) return;
   clearInterval(visibilityFade);
+  recordVisibility("fade-start", { visible });
   if (visible) {
     if (!win.isVisible()) {
       win.setOpacity(0);
@@ -311,6 +338,7 @@ function applyVisibility(visible) {
     if (progress === 1) {
       clearInterval(visibilityFade);
       if (!visible) win.hide();
+      recordVisibility("fade-finish", { visible });
     }
   }, 16);
 }
@@ -693,6 +721,28 @@ if (!lock) {
       // Keep the original encryption service so upgrading does not orphan paired devices.
       // The app's display identity is configured after Chromium's storage key is cached.
       if (safeStorage.isEncryptionAvailable()) safeStorage.encryptString("");
+      visibilityDiagnostics = await createVisibilityDiagnostics(
+        path.join(app.getPath("userData"), "visibility-diagnostics.json"),
+      );
+      recordVisibility("startup", {
+        platform: process.platform,
+        electron: process.versions.electron,
+        node: process.versions.node,
+        release: path.basename(path.dirname(__dirname)).slice(0, 12),
+      });
+      for (const event of ["suspend", "resume", "lock-screen", "unlock-screen"])
+        powerMonitor.on(event, () => recordVisibility(event));
+      for (const event of [
+        "display-added",
+        "display-removed",
+        "display-metrics-changed",
+      ])
+        screen.on(event, () =>
+          recordVisibility(event, {
+            displayCount: screen.getAllDisplays().length,
+          }),
+        );
+      app.on("before-quit", () => recordVisibility("before-quit"));
       app.setName("Nox");
       app.dock?.setIcon(nativeImage.createFromPath(appIcon));
       app.setAboutPanelOptions({
@@ -791,6 +841,30 @@ if (!lock) {
           sandbox: true,
         },
       });
+      for (const event of [
+        "show",
+        "hide",
+        "closed",
+        "unresponsive",
+        "responsive",
+      ])
+        win.on(event, () => recordVisibility("window-" + event));
+      win.webContents.on("render-process-gone", (_event, detail) =>
+        recordVisibility("renderer-gone", {
+          reason: detail.reason,
+          exitCode: detail.exitCode,
+        }),
+      );
+      win.webContents.on(
+        "did-fail-load",
+        (_event, errorCode, error, _url, isMainFrame) => {
+          if (isMainFrame)
+            recordVisibility("renderer-load-failed", { errorCode, error });
+        },
+      );
+      win.webContents.on("did-finish-load", () =>
+        recordVisibility("renderer-loaded"),
+      );
       win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
       win.webContents.setWindowOpenHandler(({ url }) => {
         if (url.startsWith(ORIGIN)) void shell.openExternal(url);
@@ -896,7 +970,22 @@ if (!lock) {
         );
       }, 33);
       let inspectingVisibility = false;
-      const visibilityHistory = [];
+      let inspectionBegan = 0;
+      let inspectionStage = null;
+      let nextHeartbeat = Date.now() + 30000;
+      const healthTimer = setInterval(() => {
+        const time = Date.now();
+        recordVisibility("heartbeat", {
+          pendingMs: inspectionBegan ? time - inspectionBegan : 0,
+          type: inspectionStage,
+          lagMs: Math.max(0, time - nextHeartbeat),
+          reason:
+            inspectionBegan && time - inspectionBegan > 10000
+              ? "inspection-stalled"
+              : "health",
+        });
+        nextHeartbeat = time + 30000;
+      }, 30000);
       let lastVisibilityDecision = "";
       const visibilityTimer = setInterval(async () => {
         if (win.isDestroyed() || inspectingVisibility || visibility.isManual())
@@ -905,12 +994,16 @@ if (!lock) {
         const revision = visibilityRevision;
         let decision = { supported: null, reason: "interacting" };
         inspectingVisibility = true;
+        inspectionBegan = Date.now();
         try {
           if (!interacting)
             decision = await inspectVisibility({
               inspect: () => inspectPoint(anchorPoint()),
               resolve: resolveLocalTarget,
               supportedApps: SUPPORTED_APPS,
+              onStage: (stage) => {
+                inspectionStage = stage;
+              },
             });
           if (revision !== visibilityRevision || win.isDestroyed()) return;
           const visible = visibility.update({
@@ -921,37 +1014,37 @@ if (!lock) {
             desiredVisible = visible;
             applyVisibility(visible);
           }
-          const key = JSON.stringify({ ...decision, visible });
-          if (key !== lastVisibilityDecision) {
+          const totalMs = decision.totalMs || 0;
+          const key = JSON.stringify({
+            supported: decision.supported,
+            reason: decision.reason,
+            error: decision.error,
+            target: decision.target,
+            visible,
+          });
+          if (key !== lastVisibilityDecision || totalMs > 5000) {
             lastVisibilityDecision = key;
-            visibilityHistory.push({
-              at: new Date().toISOString(),
-              ...decision,
-              visible,
-            });
-            if (visibilityHistory.length > 32) visibilityHistory.shift();
-            await fs
-              .writeFile(
-                path.join(
-                  app.getPath("userData"),
-                  "visibility-diagnostics.json",
-                ),
-                JSON.stringify(visibilityHistory),
-                { mode: 0o600 },
-              )
-              .catch((error) =>
-                console.error("Nox visibility diagnostics:", error.code),
-              );
+            recordVisibility("check", { ...decision, visible });
           }
-        } catch {
-          // OS inspection may briefly be unavailable while switching desktops.
+          if (visible && !win.isVisible())
+            recordVisibility("visibility-mismatch", {
+              reason: "expected-visible-window-hidden",
+            });
+        } catch (error) {
+          recordVisibility("inspection-outer-error", {
+            error: error.message,
+            errorCode: error.code || error.name,
+          });
         } finally {
           inspectingVisibility = false;
+          inspectionBegan = 0;
+          inspectionStage = null;
         }
       }, 1000);
       win.once("closed", () => {
         clearInterval(hoverTimer);
         clearInterval(visibilityTimer);
+        clearInterval(healthTimer);
         clearInterval(visibilityFade);
       });
       const finishDrag = (result) => {
