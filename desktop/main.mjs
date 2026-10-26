@@ -16,7 +16,7 @@ import {
 import path from "node:path";
 import { createMediaTools } from "./media-tools.mjs";
 import { updateNox } from "./update.mjs";
-import { createVisibilityPolicy } from "./visibility.mjs";
+import { createVisibilityPolicy, inspectVisibility } from "./visibility.mjs";
 import {
   afterBackgroundSync,
   syncFailureState,
@@ -896,33 +896,52 @@ if (!lock) {
         );
       }, 33);
       let inspectingVisibility = false;
+      const visibilityHistory = [];
+      let lastVisibilityDecision = "";
       const visibilityTimer = setInterval(async () => {
         if (win.isDestroyed() || inspectingVisibility || visibility.isManual())
           return;
         const interacting = connecting || dragController.isDragging();
         const revision = visibilityRevision;
-        let supported = null;
+        let decision = { supported: null, reason: "interacting" };
         inspectingVisibility = true;
         try {
-          if (!interacting) {
-            const target = await inspectPoint(anchorPoint());
-            supported = !target.error && SUPPORTED_APPS.has(target.bundleId);
-            if (supported) {
-              try {
-                await resolveLocalTarget(target);
-              } catch {
-                supported = false;
-              }
-            }
-          }
+          if (!interacting)
+            decision = await inspectVisibility({
+              inspect: () => inspectPoint(anchorPoint()),
+              resolve: resolveLocalTarget,
+              supportedApps: SUPPORTED_APPS,
+            });
           if (revision !== visibilityRevision || win.isDestroyed()) return;
           const visible = visibility.update({
-            supported,
+            supported: decision.supported,
             interacting: connecting || dragController.isDragging(),
           });
           if (visible !== desiredVisible || (visible && !win.isVisible())) {
             desiredVisible = visible;
             applyVisibility(visible);
+          }
+          const key = JSON.stringify({ ...decision, visible });
+          if (key !== lastVisibilityDecision) {
+            lastVisibilityDecision = key;
+            visibilityHistory.push({
+              at: new Date().toISOString(),
+              ...decision,
+              visible,
+            });
+            if (visibilityHistory.length > 32) visibilityHistory.shift();
+            await fs
+              .writeFile(
+                path.join(
+                  app.getPath("userData"),
+                  "visibility-diagnostics.json",
+                ),
+                JSON.stringify(visibilityHistory),
+                { mode: 0o600 },
+              )
+              .catch((error) =>
+                console.error("Nox visibility diagnostics:", error.code),
+              );
           }
         } catch {
           // OS inspection may briefly be unavailable while switching desktops.

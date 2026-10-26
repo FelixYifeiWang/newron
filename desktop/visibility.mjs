@@ -30,9 +30,47 @@ export function createVisibilityPolicy({ now = Date.now } = {}) {
         misses = 0;
         return (visible = true);
       }
+      if (supported === null) misses = 0;
       if (supported === false && ++misses >= 2) visible = false;
       // An inspector error is unknown, not a reason to flash or disappear.
       return visible;
     },
   };
+}
+
+// Only a positively identified unsupported app is evidence for hiding.
+export async function inspectVisibility({ inspect, resolve, supportedApps }) {
+  let target;
+  try {
+    target = await inspect();
+  } catch (error) {
+    return {
+      supported: null,
+      reason: "window-check-failed",
+      error: diagnosticError(error),
+    };
+  }
+  if (target.error || !target.bundleId)
+    return { supported: null, reason: "window-unavailable" };
+  const bundleId = target.bundleId;
+  if (!supportedApps.has(bundleId))
+    return { supported: false, reason: "unsupported-app", bundleId };
+  try {
+    await resolve(target);
+    return { supported: true, reason: "session-resolved", bundleId };
+  } catch (error) {
+    return {
+      supported: null,
+      reason: "session-check-failed",
+      bundleId,
+      error: diagnosticError(error),
+    };
+  }
+}
+function diagnosticError(error) {
+  return String(error?.message || "Unknown inspection error")
+    .replace(/https?:\/\/\S+/gi, "[URL]")
+    .replace(/\b(?:sk-[\w-]+|[a-f0-9]{64})\b/gi, "[credential]")
+    .replace(/\/(?:Users|home)\/[^\s/]+/g, "~")
+    .slice(0, 300);
 }

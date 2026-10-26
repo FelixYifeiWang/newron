@@ -42,3 +42,51 @@ test("unknown inspection results cannot cause flicker or unhide a hidden buddy",
   policy.update({ supported: false });
   assert.equal(policy.update({ supported: null }), false);
 });
+
+test("an unavailable inspector is unknown, not an unsupported app", async () => {
+  const { inspectVisibility } = await import("../desktop/visibility.mjs");
+  for (const inspect of [
+    async () => ({ error: "no-target" }),
+    async () => {
+      throw new Error("timeout");
+    },
+  ]) {
+    const result = await inspectVisibility({
+      inspect,
+      resolve: async () => assert.fail("No target to resolve"),
+      supportedApps: new Set(["codex"]),
+    });
+    assert.equal(result.supported, null);
+  }
+});
+test("a failed session read cannot be treated as proof of an unsupported window", async () => {
+  const { inspectVisibility } = await import("../desktop/visibility.mjs");
+  const result = await inspectVisibility({
+    inspect: async () => ({ bundleId: "codex" }),
+    resolve: async () => {
+      throw new Error("temporary navigation record unavailable");
+    },
+    supportedApps: new Set(["codex"]),
+  });
+  assert.equal(result.supported, null);
+  assert.equal(result.reason, "session-check-failed");
+});
+test("confirmed unsupported apps still hide; successful exact resolution shows", async () => {
+  const { inspectVisibility } = await import("../desktop/visibility.mjs");
+  for (const id of ["browser", "codex"]) {
+    const result = await inspectVisibility({
+      inspect: async () => ({ bundleId: id }),
+      resolve: async () => {},
+      supportedApps: new Set(["codex"]),
+    });
+    assert.equal(result.supported, id === "codex");
+  }
+});
+test("unsupported samples separated by unknown results are not consecutive misses", () => {
+  const { policy, advance } = fixture();
+  advance(16000);
+  policy.update({ supported: false });
+  policy.update({ supported: null });
+  assert.equal(policy.update({ supported: false }), true);
+  assert.equal(policy.update({ supported: false }), false);
+});
