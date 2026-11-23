@@ -55,6 +55,7 @@ export async function inspectVisibility({
       bundleId: target.bundleId,
       pid: target.pid,
       windowCount: target.windowCount,
+      windowBounds: target.windowBounds,
       launchedAt: target.launchedAt,
       bounds: target.bounds,
       point: target.point,

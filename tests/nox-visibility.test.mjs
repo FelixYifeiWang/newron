@@ -100,3 +100,17 @@ test("a confirmed empty desktop remains unsupported", async () => {
   });
   assert.equal(result.supported, false);
 });
+
+test("visibility diagnostics include the extra window rectangles needed to explain panel counting", async () => {
+  const { inspectVisibility } = await import("../desktop/visibility.mjs");
+  const windowBounds = [
+    { x: 0, y: 0, width: 1470, height: 923 },
+    { x: 469, y: 164, width: 599, height: 178 },
+  ];
+  const result = await inspectVisibility({
+    inspect: async () => ({ bundleId: "codex", windowCount: 2, windowBounds }),
+    resolve: async () => {},
+    supportedApps: new Set(["codex"]),
+  });
+  assert.deepEqual(result.target.windowBounds, windowBounds);
+});
