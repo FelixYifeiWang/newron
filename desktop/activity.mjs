@@ -3,8 +3,13 @@ import { createInterface } from "node:readline";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { assertConversationWindow } from "./window-context.mjs";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const windowContextEvent = (line) =>
+  line.includes("rendererWindowId=") &&
+  line.includes("rendererWindowAppearance=") &&
+  line.includes("rendererWindowVisible=");
 const navigationEvent = (line) =>
   line.includes(" thread_stream_view_activity_changed ") ||
   line.includes("IAB_LIFECYCLE received browser sidebar owner sync ") ||
@@ -18,8 +23,15 @@ export function activeConversation(
   const windows = new Map();
   const routes = new Map();
   const browserSessions = new Map();
+  const contexts = new Map();
+  const routeOrders = new Map();
+  const activations = new Map();
+  const closed = new Set();
+  let lastGlobal = -1,
+    lastScoped = -1,
+    order = 0;
   for (const line of raw.split("\n")) {
-    if (!navigationEvent(line)) continue;
+    if (!navigationEvent(line) && !windowContextEvent(line)) continue;
     const timestamp = Date.parse(line.slice(0, 24));
     if (!Number.isFinite(timestamp) || timestamp < launchedAt) continue;
     const fields = Object.fromEntries(
@@ -28,6 +40,24 @@ export function activeConversation(
         m[2],
       ]),
     );
+    order++;
+    if (windowContextEvent(line) && /^\d+$/.test(fields.rendererWindowId || ""))
+      contexts.set(fields.rendererWindowId, {
+        primary: fields.rendererWindowAppearance === "primary",
+        visible: fields.rendererWindowVisible === "true",
+      });
+    if (
+      line.includes(" thread_stream_view_activity_changed ") &&
+      !fields.rendererWindowId &&
+      uuid.test(fields.conversationId || "")
+    ) {
+      // Host-level activity can belong to a helper or background task. It never
+      // establishes UI ownership; only the visible primary window's route can.
+      lastGlobal = order;
+      if (fields.active === "true")
+        activations.set(fields.conversationId, order);
+      continue;
+    }
     if (line.includes("IAB_LIFECYCLE received browser sidebar owner sync ")) {
       const route = /^\/local\/([0-9a-f-]{36})(?:[?#]|$)/i.exec(
         fields.ownerRoutePath || "",
@@ -36,6 +66,7 @@ export function activeConversation(
         const window = fields.windowId;
         const routed = route && uuid.test(route[1]) ? route[1] : null;
         routes.set(window, routed);
+        routeOrders.set(window, order);
         // New Codex builds can navigate with owner-route events alone. Keep the
         // already-active window in sync, or a subsequent helper stream can
         // displace the real task because it no longer matches the routed task.
@@ -61,6 +92,7 @@ export function activeConversation(
       }
       continue;
     }
+    if (!line.includes(" thread_stream_view_activity_changed ")) continue;
     if (
       fields.rendererWindowAppearance !== "primary" ||
       !uuid.test(fields.conversationId || "") ||
@@ -79,12 +111,50 @@ export function activeConversation(
       routes.get(window) === current &&
       browserSessions.get(window)?.has(id);
     if (fields.active === "true" && fields.rendererWindowVisible === "true") {
-      if (!internalHelper) windows.set(window, id);
+      lastScoped = order;
+      if (!internalHelper) {
+        windows.set(window, id);
+        closed.delete(window);
+      }
     } else if (
       (fields.active === "false" || fields.rendererWindowVisible === "false") &&
       windows.get(window) === id
-    )
+    ) {
+      lastScoped = order;
       windows.delete(window);
+      closed.add(window);
+    }
+  }
+  if (lastGlobal > lastScoped) {
+    const primary = [...contexts].filter(
+      ([window, context]) =>
+        context.primary && context.visible && !closed.has(window),
+    );
+    if (primary.length > 1)
+      throw new Error(
+        "More than one conversation is open. Keep one Codex window open and connect again.",
+      );
+    const selected = primary.length === 1 && routes.get(primary[0][0]);
+    if (!selected || (knownSessionIds && !knownSessionIds.has(selected)))
+      throw new Error(
+        "Open a local Codex conversation with a readable session, then connect again.",
+      );
+    const window = primary[0][0];
+    const pendingNavigation = [...activations].some(
+      ([id, activation]) =>
+        id !== selected &&
+        activation > routeOrders.get(window) &&
+        !(
+          knownSessionIds &&
+          !knownSessionIds.has(id) &&
+          browserSessions.get(window)?.has(id)
+        ),
+    );
+    if (pendingNavigation)
+      throw new Error(
+        "The session changed. Wait for the conversation to finish opening, then connect again.",
+      );
+    return selected;
   }
   const ids = [...new Set(windows.values())];
   if (ids.length !== 1)
@@ -126,8 +196,7 @@ export async function readOpenConversation(
     throw new Error(
       "Move Nox over the open Codex conversation. Other apps are not supported yet.",
     );
-  if (target.windowCount !== 1)
-    throw new Error("Keep one Codex window open, then connect again.");
+  assertConversationWindow(target, "Codex");
   if (
     !Number.isSafeInteger(target.pid) ||
     target.pid <= 0 ||
@@ -163,7 +232,34 @@ export async function readOpenConversation(
     const lines = createInterface({ input, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
-        if (navigationEvent(line)) events.push(line);
+        if (navigationEvent(line) || windowContextEvent(line)) {
+          // Retain only navigation/visibility fields, never URLs, console text,
+          // message bodies or other unrelated log payloads.
+          const eventName = line.includes(
+            " thread_stream_view_activity_changed ",
+          )
+            ? "thread_stream_view_activity_changed"
+            : line.includes("browser sidebar owner sync ")
+              ? "IAB_LIFECYCLE received browser sidebar owner sync"
+              : line.includes("browser use session route capture ")
+                ? "IAB_LIFECYCLE received browser use session route capture"
+                : "window_context";
+          const allowed = new Set([
+            "active",
+            "conversationId",
+            "rendererWindowAppearance",
+            "rendererWindowId",
+            "rendererWindowVisible",
+            "windowId",
+            "ownerRoutePath",
+          ]);
+          const fields = [
+            ...line.matchAll(/\b([A-Za-z][A-Za-z0-9]*)=([^\s]+)/g),
+          ]
+            .filter((match) => allowed.has(match[1]))
+            .map((match) => `${match[1]}=${match[2]}`);
+          events.push(`${line.slice(0, 24)} ${eventName} ${fields.join(" ")}`);
+        }
       }
     } finally {
       lines.close();

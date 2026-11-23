@@ -1,6 +1,7 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
+import { assertConversationWindow } from "./window-context.mjs";
 export const CLAUDE_BUNDLE_ID = "com.anthropic.claudefordesktop";
 const localId =
   /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,8 +34,7 @@ export async function readFocusedClaudeSession(
 ) {
   if (target.bundleId !== CLAUDE_BUNDLE_ID)
     throw new Error("Move Nox over an open Claude Code session.");
-  if (target.windowCount !== 1)
-    throw new Error("Keep one Claude window open, then connect again.");
+  assertConversationWindow(target, "Claude");
   if (
     !Number.isSafeInteger(target.pid) ||
     target.pid <= 0 ||

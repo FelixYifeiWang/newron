@@ -22,6 +22,7 @@ const fields = new Set([
   "lagMs",
   "pid",
   "windowCount",
+  "windowBounds",
   "launchedAt",
   "bounds",
   "point",
@@ -42,6 +43,16 @@ const fields = new Set([
 ]);
 function clean(value, depth = 0) {
   if (depth > 3) return undefined;
+  if (Array.isArray(value))
+    return value
+      .slice(0, 8)
+      .map((rect) =>
+        Object.fromEntries(
+          ["x", "y", "width", "height"]
+            .filter((key) => Number.isFinite(rect?.[key]))
+            .map((key) => [key, rect[key]]),
+        ),
+      );
   if (typeof value === "string")
     return value
       .slice(0, 2000)

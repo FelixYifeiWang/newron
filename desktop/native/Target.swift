@@ -46,11 +46,17 @@ for window in windows {
           let rect = CGRect(dictionaryRepresentation: raw), rect.contains(point),
           let pid = window[kCGWindowOwnerPID as String] as? Int32 else { continue }
     let app = NSRunningApplication(processIdentifier: pid)
-    let count = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid }.count
+    let owned = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid }
+    let ownedBounds = owned.compactMap { entry -> [String: Double]? in
+        guard let raw = entry[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: raw) else { return nil }
+        return ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
+    }
+    let count = owned.count
     emit([
         "bundleId": app?.bundleIdentifier ?? "", "pid": pid,
         "launchedAt": (app?.launchDate?.timeIntervalSince1970 ?? 0) * 1000,
-        "windowCount": count,
+        "windowCount": count, "windowBounds": ownedBounds,
         "point": ["x": x, "y": y],
         "bounds": ["x": rect.minX, "y": rect.minY, "width": rect.width, "height": rect.height]
     ])

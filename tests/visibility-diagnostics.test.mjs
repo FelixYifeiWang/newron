@@ -101,3 +101,31 @@ test("upgrade retains old errors and renderer failures survive later healthy eve
   assert.equal(data.problems[0].error, "old failure");
   assert.equal(data.problems[1].reason, "crashed");
 });
+
+test("additional window geometry is retained without titles or arbitrary window data", async (t) => {
+  const file = await fixture(t),
+    log = await createVisibilityDiagnostics(file);
+  log.record({
+    event: "check",
+    target: {
+      windowBounds: Array.from({ length: 12 }, () => ({
+        x: 1,
+        y: 2,
+        width: 599,
+        height: 178,
+        title: "PRIVATE",
+        token: "PRIVATE",
+      })),
+    },
+  });
+  await log.flush();
+  const data = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual(data.recent[0].target.windowBounds[0], {
+    x: 1,
+    y: 2,
+    width: 599,
+    height: 178,
+  });
+  assert.equal(data.recent[0].target.windowBounds.length, 8);
+  assert.ok(!(await readFile(file, "utf8")).includes("PRIVATE"));
+});

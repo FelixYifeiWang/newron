@@ -187,3 +187,151 @@ test("closing the routed task still clears it and cannot reconnect its previous 
     /Open the conversation/,
   );
 });
+
+const modern = (id, active = true, time = at) =>
+  `${new Date(time).toISOString()} info [host-app-server-manager] thread_stream_view_activity_changed active=${active} conversationId=${id} resumeState=needs_resume streamRole=null`;
+const windowContext = (
+  window = "1",
+  visible = true,
+  appearance = "primary",
+  time = at,
+) =>
+  `${new Date(time).toISOString()} warning [electron-message-handler] chatgpt_pubsub_transport_closed rendererWindowId=${window} rendererWindowAppearance=${appearance} rendererWindowVisible=${visible}`;
+test("modern global activity resolves only the explicit visible owner route, ignoring auxiliary tasks", () => {
+  const raw = [windowContext(), route(a), modern(a), helper(b), modern(b)].join(
+    "\n",
+  );
+  assert.equal(activeConversation(raw, 0, new Set([a])), a);
+});
+test("modern owner-route navigation changes the selected conversation without scoped activity", () => {
+  assert.equal(
+    activeConversation(
+      [windowContext(), route(a), modern(a), route(b)].join("\n"),
+      0,
+      new Set([a, b]),
+    ),
+    b,
+  );
+});
+test("modern activity without visible primary ownership cannot pick the latest thread", () => {
+  for (const raw of [
+    modern(a),
+    [route(a), modern(a)].join("\n"),
+    [windowContext(), modern(a)].join("\n"),
+    [windowContext("1", false), route(a), modern(a)].join("\n"),
+  ])
+    assert.throws(
+      () => activeConversation(raw, 0, new Set([a])),
+      /conversation|window|session/i,
+    );
+});
+test("modern multiple visible primary windows are rejected even if the most recent one is known", () => {
+  const raw = [
+    windowContext(),
+    route(a),
+    windowContext("2"),
+    route(b).replace("windowId=1", "windowId=2"),
+    modern(b),
+  ].join("\n");
+  assert.throws(
+    () => activeConversation(raw, 0, new Set([a, b])),
+    /More than one/,
+  );
+});
+test("modern home, cloud and unindexed routes never fall back to a known session", () => {
+  for (const path of ["/", "/chat/cloud-id", "/local/" + b]) {
+    const raw = [
+      windowContext(),
+      route(a),
+      modern(a),
+      route(a).replace("/local/" + a, path),
+    ].join("\n");
+    assert.throws(
+      () => activeConversation(raw, 0, new Set([a])),
+      /conversation|session/i,
+    );
+  }
+});
+test("modern background windows and late global activity cannot revive a closed legacy view", () => {
+  assert.throws(
+    () =>
+      activeConversation(
+        [windowContext("1", true, "popout"), route(a), modern(a)].join("\n"),
+        0,
+        new Set([a]),
+      ),
+    /conversation|window/i,
+  );
+  assert.throws(
+    () =>
+      activeConversation(
+        [event(a), route(a), event(a, "active=false"), modern(a)].join("\n"),
+        0,
+        new Set([a]),
+      ),
+    /conversation|window/i,
+  );
+});
+test("modern metadata is read from normal window telemetry with a nested popup present", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "nox-modern-reader-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(
+    join(root, "codex-desktop-test-123-t0-i1.log"),
+    [windowContext(), route(a), modern(a), modern(b), route(a)].join("\n"),
+  );
+  const bounds = { x: 0, y: 0, width: 1000, height: 800 };
+  const result = await readOpenConversation(
+    {
+      ...target,
+      bounds,
+      windowCount: 2,
+      windowBounds: [bounds, { x: 300, y: 100, width: 400, height: 178 }],
+    },
+    root,
+    new Set([a, b]),
+  );
+  assert.equal(result, a);
+});
+test("a newer unrelated global activation blocks a stale owner route instead of connecting the old session", () => {
+  for (const id of [a, b]) {
+    const raw = [
+      windowContext(),
+      route(a),
+      modern(id === a ? b : a),
+      modern(b),
+    ].join("\n");
+    assert.throws(
+      () => activeConversation(raw, 0, new Set([a, b])),
+      /changed|wait|session/i,
+    );
+  }
+});
+test("an unannounced unknown task cannot borrow the previous visible route", () => {
+  assert.throws(
+    () =>
+      activeConversation(
+        [windowContext(), route(a), modern(b)].join("\n"),
+        0,
+        new Set([a]),
+      ),
+    /changed|wait|session/i,
+  );
+});
+test("a refreshed owner route settles navigation even after background global events", () => {
+  assert.equal(
+    activeConversation(
+      [windowContext(), route(a), modern(b), route(a)].join("\n"),
+      0,
+      new Set([a, b]),
+    ),
+    a,
+  );
+});
+test("ordinary window telemetry cannot select a different session even when it includes active fields", () => {
+  const fake = event(b).replace(
+    "thread_stream_view_activity_changed",
+    "unrelated_window_telemetry",
+  );
+  const raw = [windowContext(), route(a), modern(a), fake].join("\n");
+  assert.equal(activeConversation(raw, 0, new Set([a, b])), a);
+});

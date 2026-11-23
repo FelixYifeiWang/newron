@@ -21,6 +21,7 @@ for (const file of [
   "target.mjs",
   "transcripts.mjs",
   "activity.mjs",
+  "window-context.mjs",
   "claude.mjs",
   "install.mjs",
   "update.mjs",
