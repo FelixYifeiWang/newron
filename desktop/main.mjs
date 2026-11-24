@@ -20,6 +20,7 @@ import { updateNox } from "./update.mjs";
 import { createVisibilityPolicy, inspectVisibility } from "./visibility.mjs";
 import {
   afterBackgroundSync,
+  backgroundSyncStatus,
   syncFailureState,
   noxState,
   pointerDirection,
@@ -66,6 +67,8 @@ function recordVisibility(event, detail = {}) {
         !!exists &&
         !win.webContents.isDestroyed() &&
         win.webContents.isLoadingMainFrame(),
+      status,
+      error: lastError,
     },
     ...detail,
   });
@@ -213,6 +216,7 @@ async function tick() {
       (s) => !s.paused && !s.done,
     )) {
       if (dragController?.isDragging()) break;
+      const previousError = subscription.error;
       try {
         const result = await collector.syncTranscript({
           connection,
@@ -224,27 +228,44 @@ async function tick() {
         subscription.turns = result.total;
         subscription.lastSynced = new Date().toISOString();
         subscription.error = "";
+        subscription.syncState = "following";
         if (subscription.mode === "once" && !subscription.historyRemaining)
           subscription.done = true;
-        if (!dragController?.isDragging()) {
-          lastError = "";
-          status = afterBackgroundSync(status, "following");
-        }
+        if (previousError)
+          recordVisibility("sync-recovered", {
+            subscriptionIndex: subscriptions.indexOf(subscription),
+            provider: subscription.provider,
+          });
         await persist();
       } catch (error) {
         const nextState = syncFailureState(error);
+        subscription.syncState = nextState;
         subscription.error = nextState === "waiting" ? "" : error.message;
-        if (!dragController?.isDragging()) {
-          lastError = subscription.error;
-          status = afterBackgroundSync(status, nextState);
-        }
+        if (subscription.error !== previousError)
+          recordVisibility("sync-failed", {
+            subscriptionIndex: subscriptions.indexOf(subscription),
+            provider: subscription.provider,
+            error: subscription.error,
+            errorCode: error.code || error.name,
+            httpStatus: error.status,
+          });
         if (error.status === 401) subscription.paused = true;
         await persist();
       }
     }
   } finally {
     busy = false;
+    if (!dragController?.isDragging()) {
+      updateBackgroundStatus();
+      notifyBuddy();
+    }
   }
+}
+function updateBackgroundStatus() {
+  const next = backgroundSyncStatus(subscriptions, candidate);
+  const settled = afterBackgroundSync(status, next.state);
+  if (settled === next.state) lastError = next.error;
+  status = settled;
 }
 const buddyOffsetY = 54;
 let candidate = null,
@@ -469,7 +490,11 @@ async function findCandidate() {
         `${connection.origin}/api/device-session?externalId=${encodeURIComponent(found.sessionId)}&provider=${encodeURIComponent(found.provider)}`,
         { headers: { Authorization: `Bearer ${connection.token}` } },
       );
-      if (r.ok) connected = !!(await r.json()).connected;
+      if (r.ok) {
+        const data = await r.json();
+        connected = !!data.connected;
+        found.subscriptionId = data.session?.id;
+      }
     }
     if (
       revision === candidateRevision &&
@@ -479,6 +504,11 @@ async function findCandidate() {
       candidate = found;
       candidateConnected = connected;
       candidateHint = "";
+      updateBackgroundStatus();
+      recordVisibility("candidate-resolved", {
+        provider: found.provider,
+        connected,
+      });
     }
   } catch (e) {
     if (revision === candidateRevision) {
@@ -486,6 +516,11 @@ async function findCandidate() {
       candidate = null;
       candidateConnected = false;
       candidateHint = e.message;
+      status = afterBackgroundSync(status, "error");
+      recordVisibility("candidate-failed", {
+        error: e.message,
+        errorCode: e.code || e.name,
+      });
     }
   } finally {
     notifyBuddy();
@@ -606,6 +641,10 @@ function showDropFeedback(value) {
   feedbackMessage = value.message || "";
   if (value.error !== undefined) lastError = value.error;
   if (value.target !== undefined) targetTitle = value.target;
+  recordVisibility("connect-state", {
+    status: value.state,
+    error: value.error,
+  });
   if (!feedbackWindow) return;
   if (value.state === "reading") {
     clearTimeout(feedbackTimer);

@@ -112,3 +112,122 @@ test("intentional disconnection is quiet while real authentication failures stay
   assert.equal(syncFailureState({ status: 401 }), "error");
   assert.equal(syncFailureState({ status: 500 }), "error");
 });
+
+// A missing old transcript must not turn a healthy current chat red.
+import { backgroundSyncStatus } from "../lib/nox-motion.mjs";
+const healthy = {
+  provider: "Codex",
+  sessionId: "current",
+  lastSynced: "now",
+  error: "",
+};
+const missing = {
+  provider: "Codex",
+  sessionId: "old",
+  error: "Local history missing",
+};
+test("background health does not depend on which subscription ran last", () => {
+  for (const subscriptions of [
+    [healthy, missing],
+    [missing, healthy],
+  ])
+    assert.deepEqual(backgroundSyncStatus(subscriptions), {
+      state: "following",
+      error: "",
+    });
+});
+test("a selected healthy session is unaffected by another session's failure", () => {
+  assert.deepEqual(backgroundSyncStatus([healthy, missing], healthy), {
+    state: "following",
+    error: "",
+  });
+});
+test("a selected failing session keeps its own actionable error", () => {
+  assert.deepEqual(backgroundSyncStatus([healthy, missing], missing), {
+    state: "error",
+    error: missing.error,
+  });
+});
+test("a new candidate does not inherit the previous session's error", () => {
+  assert.deepEqual(
+    backgroundSyncStatus([missing], { provider: "Codex", sessionId: "new" }),
+    { state: "waiting", error: "" },
+  );
+});
+test("paused and disconnected old subscriptions never report an active failure", () => {
+  assert.deepEqual(backgroundSyncStatus([{ ...missing, paused: true }]), {
+    state: "waiting",
+    error: "",
+  });
+  assert.deepEqual(
+    backgroundSyncStatus([{ ...missing, paused: true }], missing),
+    { state: "paused", error: "" },
+  );
+});
+test("provider and Claude desktop identity keep status scoped to the exact conversation", () => {
+  assert.deepEqual(
+    backgroundSyncStatus([missing], {
+      provider: "Claude Code",
+      sessionId: "old",
+    }),
+    { state: "waiting", error: "" },
+  );
+  assert.deepEqual(
+    backgroundSyncStatus(
+      [{ ...healthy, provider: "Claude Code", localSessionId: "desktop" }],
+      {
+        provider: "Claude Code",
+        sessionId: "resumed",
+        localSessionId: "desktop",
+      },
+    ),
+    { state: "following", error: "" },
+  );
+});
+test("a complete background outage remains visible and an untested subscription is waiting", () => {
+  assert.deepEqual(backgroundSyncStatus([missing]), {
+    state: "error",
+    error: missing.error,
+  });
+  assert.deepEqual(
+    backgroundSyncStatus([{ ...healthy, lastSynced: undefined }]),
+    { state: "waiting", error: "" },
+  );
+});
+
+test("authentication failure stays actionable even though its retry was stopped", () => {
+  const auth = {
+    ...missing,
+    paused: true,
+    syncState: "error",
+    error: "Pair Nox again",
+  };
+  assert.deepEqual(backgroundSyncStatus([auth]), {
+    state: "error",
+    error: auth.error,
+  });
+  assert.deepEqual(backgroundSyncStatus([healthy, auth], auth), {
+    state: "error",
+    error: auth.error,
+  });
+});
+test("a server-side pause stays paused instead of turning red", () => {
+  const paused = { ...missing, syncState: "paused" };
+  assert.deepEqual(backgroundSyncStatus([paused], paused), {
+    state: "paused",
+    error: paused.error,
+  });
+});
+
+test("reconnecting a frozen conversation uses its live subscription's status", () => {
+  const frozen = { ...missing, id: "frozen", paused: true };
+  const live = { ...healthy, id: "live", sessionId: missing.sessionId };
+  assert.deepEqual(backgroundSyncStatus([frozen, live], live), {
+    state: "following",
+    error: "",
+  });
+  assert.deepEqual(
+    backgroundSyncStatus([frozen, live], { ...live, subscriptionId: "frozen" }),
+    { state: "paused", error: "" },
+  );
+});

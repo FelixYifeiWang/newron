@@ -259,3 +259,60 @@ test("non-Codex sources retain their existing transcript", async () => {
     { file: "/claude.jsonl" },
   );
 });
+
+test("a missing indexed Codex file recovers only verified same-ID archived history", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "nox-missing-index-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "archived_sessions"));
+  const id = sessions[0].sessionId;
+  const archive = join(
+    root,
+    "archived_sessions",
+    `rollout-2026-01-01-${id}.jsonl`,
+  );
+  await writeFile(
+    archive,
+    JSON.stringify({ type: "session_meta", payload: { id } }) + "\n",
+  );
+  const result = await resolveFollowedTranscript(
+    { provider: "Codex", sessionId: id },
+    {
+      codexHome: root,
+      metadata: async () => [
+        { ...sessions[0], file: join(root, "sessions", "missing.jsonl") },
+      ],
+    },
+  );
+  assert.equal(result.file, await realpath(archive));
+  assert.deepEqual(result.files, [await realpath(archive)]);
+});
+test("an indexed session without surviving history has a concise retryable error", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "nox-no-history-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "sessions"));
+  const id = sessions[0].sessionId;
+  for (const [suffix, payload] of [
+    ["wrong", { id: sessions[1].sessionId }],
+    ["helper", { id, source: { subagent: {} } }],
+  ])
+    await writeFile(
+      join(root, "sessions", `rollout-2026-01-01-${id}_${suffix}.jsonl`),
+      JSON.stringify({ type: "session_meta", payload }) + "\n",
+    );
+  await assert.rejects(
+    resolveFollowedTranscript(
+      { provider: "Codex", sessionId: id },
+      {
+        codexHome: root,
+        metadata: async () => [
+          { ...sessions[0], file: join(root, "sessions", "missing.jsonl") },
+        ],
+      },
+    ),
+    {
+      code: "LOCAL_TRANSCRIPT_UNAVAILABLE",
+      message:
+        "Local history is missing. Open this session in Codex, then try again.",
+    },
+  );
+});

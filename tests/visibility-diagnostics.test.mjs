@@ -129,3 +129,33 @@ test("additional window geometry is retained without titles or arbitrary window 
   assert.equal(data.recent[0].target.windowBounds.length, 8);
   assert.ok(!(await readFile(file, "utf8")).includes("PRIVATE"));
 });
+
+test("sync and face states preserve failures without session content or credentials", async (t) => {
+  const file = await fixture(t),
+    log = await createVisibilityDiagnostics(file);
+  log.record({
+    event: "sync-failed",
+    subscriptionIndex: 2,
+    provider: "Codex",
+    httpStatus: 401,
+    errorCode: "LOCAL_TRANSCRIPT_UNAVAILABLE",
+    error: "History missing",
+    state: { status: "following", error: "" },
+    sessionId: "private-id",
+    title: "private-title",
+  });
+  log.record({
+    event: "candidate-resolved",
+    provider: "Codex",
+    connected: true,
+    state: { status: "following", error: "" },
+  });
+  await log.flush();
+  const raw = await readFile(file, "utf8"),
+    data = JSON.parse(raw);
+  assert.equal(data.problems.at(-1).subscriptionIndex, 2);
+  assert.equal(data.problems.at(-1).errorCode, "LOCAL_TRANSCRIPT_UNAVAILABLE");
+  assert.equal(data.recent.at(-1).state.status, "following");
+  assert.equal(data.recent.at(-1).connected, true);
+  assert.ok(!raw.includes("private-"));
+});

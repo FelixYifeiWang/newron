@@ -69,7 +69,7 @@ export async function codexTranscripts(sessionId, codexHome, current) {
   return [
     ...new Set([
       ...files.map((x) => x.file).filter((f) => f !== current),
-      current,
+      ...(current ? [current] : []),
     ]),
   ];
 }

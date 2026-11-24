@@ -40,6 +40,11 @@ const fields = new Set([
   "exitCode",
   "type",
   "displayCount",
+  "status",
+  "subscriptionIndex",
+  "provider",
+  "httpStatus",
+  "connected",
 ]);
 function clean(value, depth = 0) {
   if (depth > 3) return undefined;

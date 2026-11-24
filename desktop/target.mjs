@@ -129,8 +129,25 @@ export async function resolveLocalTarget(
   );
   return {
     ...selected,
-    file: await confineTranscript(selected.file, codexHome),
+    file: await codexTranscriptFile(selected, codexHome),
   };
+}
+
+async function codexTranscriptFile(selected, codexHome) {
+  try {
+    return await confineTranscript(selected.file, codexHome);
+  } catch (error) {
+    // Codex can leave an index pointing at a moved or removed file. Recovery
+    // requires a matching filename AND session header, never a similar title.
+    if (error.code !== "ENOENT") throw error;
+    const files = await codexTranscripts(selected.sessionId, codexHome);
+    if (files.length) return files.at(-1);
+    const unavailable = new Error(
+      "Local history is missing. Open this session in Codex, then try again.",
+    );
+    unavailable.code = "LOCAL_TRANSCRIPT_UNAVAILABLE";
+    throw unavailable;
+  }
 }
 
 // Codex can replace a thread's rollout when it resumes. Follow the thread, not
@@ -179,7 +196,7 @@ export async function resolveFollowedTranscript(
     throw new Error(
       "Subscribed Codex session is unavailable. Open it in Codex and reconnect.",
     );
-  const file = await confineTranscript(selected.file, codexHome);
+  const file = await codexTranscriptFile(selected, codexHome);
   return {
     file,
     sessionId,
