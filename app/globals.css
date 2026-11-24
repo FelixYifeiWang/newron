@@ -6532,7 +6532,7 @@ body.desktop-feedback-page {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  animation: buddy-controls-in 160ms ease-out;
+  animation: buddy-controls-in 100ms ease-out;
 }
 .buddy-reference {
   width: 208px;

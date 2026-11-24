@@ -484,7 +484,26 @@ async function findCandidate() {
       found.localSessionId &&
       subscriptions.find((s) => s.localSessionId === found.localSessionId);
     if (previous) found.sessionId = previous.sessionId;
-    let connected = false;
+    let connected =
+      candidate?.provider === found.provider &&
+      candidate?.sessionId === found.sessionId &&
+      candidateConnected;
+    const publish = () => {
+      if (
+        revision !== candidateRevision ||
+        !expanded ||
+        dragController?.isDragging()
+      )
+        return;
+      candidate = found;
+      candidateConnected = connected;
+      candidateHint = "";
+      updateBackgroundStatus();
+      notifyBuddy();
+    };
+    // Local identification is enough to offer Connect. The server's Connected
+    // check must not delay hover; an explicit click still resolves the chat again.
+    publish();
     if (connection) {
       const r = await request(
         `${connection.origin}/api/device-session?externalId=${encodeURIComponent(found.sessionId)}&provider=${encodeURIComponent(found.provider)}`,
@@ -496,15 +515,8 @@ async function findCandidate() {
         found.subscriptionId = data.session?.id;
       }
     }
-    if (
-      revision === candidateRevision &&
-      expanded &&
-      !dragController?.isDragging()
-    ) {
-      candidate = found;
-      candidateConnected = connected;
-      candidateHint = "";
-      updateBackgroundStatus();
+    publish();
+    if (revision === candidateRevision) {
       recordVisibility("candidate-resolved", {
         provider: found.provider,
         connected,
@@ -1177,6 +1189,7 @@ if (!lock) {
         if (setupPending || !connection)
           throw new Error("Finish setting up Nox before connecting a session.");
         if (connecting) return { connected: false };
+        candidateRevision++;
         connecting = true;
         notifyBuddy();
         try {
