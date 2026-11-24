@@ -335,3 +335,100 @@ test("ordinary window telemetry cannot select a different session even when it i
   const raw = [windowContext(), route(a), modern(a), fake].join("\n");
   assert.equal(activeConversation(raw, 0, new Set([a, b])), a);
 });
+
+import { createNavigationCache } from "../desktop/activity.mjs";
+const fileInfo = { dev: 1, ino: 2, size: 30, mtimeMs: 10, ctimeMs: 10 };
+test("unchanged navigation files share one parsed read, including concurrent lookups", async () => {
+  let reads = 0;
+  const cached = createNavigationCache(async () => {
+    reads++;
+    return [event(a)];
+  });
+  const results = await Promise.all([
+    cached("file", fileInfo),
+    cached("file", fileInfo),
+  ]);
+  assert.equal(reads, 1);
+  assert.deepEqual(results, [[event(a)], [event(a)]]);
+  await cached("file", { ...fileInfo });
+  assert.equal(reads, 1);
+});
+test("appends, truncation, replacement and permission changes invalidate navigation parsing", async () => {
+  for (const change of [
+    { size: 31 },
+    { size: 0 },
+    { ino: 3 },
+    { mtimeMs: 11 },
+    { ctimeMs: 11 },
+    { dev: 2 },
+  ]) {
+    let reads = 0;
+    const cached = createNavigationCache(async () => [
+      ++reads === 1 ? event(a) : event(b),
+    ]);
+    await cached("file", fileInfo);
+    assert.deepEqual(await cached("file", { ...fileInfo, ...change }), [
+      event(b),
+    ]);
+  }
+});
+test("failed reads are retried instead of caching an unavailable navigation file", async () => {
+  let reads = 0;
+  const cached = createNavigationCache(async () => {
+    if (++reads === 1) throw new Error("unavailable");
+    return [event(a)];
+  });
+  await assert.rejects(cached("file", fileInfo), /unavailable/);
+  assert.deepEqual(await cached("file", fileInfo), [event(a)]);
+});
+test("navigation cache is bounded and rereads an evicted log", async () => {
+  let reads = 0;
+  const cached = createNavigationCache(async () => {
+    reads++;
+    return [];
+  });
+  for (let i = 0; i <= 128; i++) await cached(String(i), fileInfo);
+  await cached("0", fileInfo);
+  assert.equal(reads, 130);
+});
+
+test("a warmed real navigation reader sees switches, truncation and deleted logs immediately", async (t) => {
+  const { appendFile } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "nox-navigation-fresh-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, "codex-123-t0-main.log");
+  await writeFile(file, event(a) + "\n");
+  assert.equal(await readOpenConversation(target, root), a);
+  assert.equal(await readOpenConversation(target, root), a);
+  await appendFile(
+    file,
+    event(a, "active=false", at + 1) + "\n" + event(b, "", at + 2) + "\n",
+  );
+  assert.equal(await readOpenConversation(target, root), b);
+  await writeFile(file, event(b, "active=false", at + 3) + "\n");
+  await assert.rejects(
+    readOpenConversation(target, root),
+    /Open the conversation/,
+  );
+  await rm(file);
+  await assert.rejects(
+    readOpenConversation(target, root),
+    /no readable navigation/,
+  );
+});
+test("default navigation cache retains only allowed event fields", async (t) => {
+  const { stat } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "nox-navigation-fields-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, "log");
+  await writeFile(
+    file,
+    event(a, "consolePayload=PRIVATE_TEXT token=PRIVATE_KEY") +
+      "\nunrelated PRIVATE_BODY\n",
+  );
+  const cached = createNavigationCache();
+  const rows = await cached(file, await stat(file));
+  assert.equal(rows.length, 1);
+  assert.equal(rows.join("").includes("PRIVATE"), false);
+  assert.equal(activeConversation(rows.join("\n"), at), a);
+});

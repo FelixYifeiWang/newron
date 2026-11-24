@@ -187,6 +187,73 @@ async function logFiles(root, pid) {
   }
   return result;
 }
+async function readNavigationEvents(file) {
+  const events = [];
+  const input = createReadStream(file, { encoding: "utf8" });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (navigationEvent(line) || windowContextEvent(line)) {
+        // Retain only navigation/visibility fields, never URLs, console text,
+        // message bodies or other unrelated log payloads.
+        const eventName = line.includes(" thread_stream_view_activity_changed ")
+          ? "thread_stream_view_activity_changed"
+          : line.includes("browser sidebar owner sync ")
+            ? "IAB_LIFECYCLE received browser sidebar owner sync"
+            : line.includes("browser use session route capture ")
+              ? "IAB_LIFECYCLE received browser use session route capture"
+              : "window_context";
+        const allowed = new Set([
+          "active",
+          "conversationId",
+          "rendererWindowAppearance",
+          "rendererWindowId",
+          "rendererWindowVisible",
+          "windowId",
+          "ownerRoutePath",
+        ]);
+        const fields = [...line.matchAll(/\b([A-Za-z][A-Za-z0-9]*)=([^\s]+)/g)]
+          .filter((match) => allowed.has(match[1]))
+          .map((match) => `${match[1]}=${match[2]}`);
+        events.push(`${line.slice(0, 24)} ${eventName} ${fields.join(" ")}`);
+      }
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+  return events;
+}
+
+// Cache sanitized events, never a chosen session. Every lookup stats the files
+// again, so a switch, append, replacement or permissions change is still read.
+export function createNavigationCache(read = readNavigationEvents) {
+  const entries = new Map();
+  return (file, info) => {
+    const version = [
+      info.dev,
+      info.ino,
+      info.size,
+      info.mtimeMs,
+      info.ctimeMs,
+    ].join(":");
+    const previous = entries.get(file);
+    if (previous?.version === version) return previous.pending;
+    const entry = { version };
+    entry.pending = Promise.resolve()
+      .then(() => read(file))
+      .catch((error) => {
+        if (entries.get(file) === entry) entries.delete(file);
+        throw error;
+      });
+    entries.delete(file);
+    entries.set(file, entry);
+    while (entries.size > 128) entries.delete(entries.keys().next().value);
+    return entry.pending;
+  };
+}
+const cachedNavigationEvents = createNavigationCache();
+
 export async function readOpenConversation(
   target,
   root = join(homedir(), "Library/Logs/com.openai.codex"),
@@ -225,47 +292,10 @@ export async function readOpenConversation(
     throw new Error(
       "This Codex version has no readable navigation record. Nothing was connected.",
     );
-  // Keep only the navigation event. Conversation messages and other log contents are never uploaded.
   const events = [];
-  for (const { file } of current) {
-    const input = createReadStream(file, { encoding: "utf8" });
-    const lines = createInterface({ input, crlfDelay: Infinity });
-    try {
-      for await (const line of lines) {
-        if (navigationEvent(line) || windowContextEvent(line)) {
-          // Retain only navigation/visibility fields, never URLs, console text,
-          // message bodies or other unrelated log payloads.
-          const eventName = line.includes(
-            " thread_stream_view_activity_changed ",
-          )
-            ? "thread_stream_view_activity_changed"
-            : line.includes("browser sidebar owner sync ")
-              ? "IAB_LIFECYCLE received browser sidebar owner sync"
-              : line.includes("browser use session route capture ")
-                ? "IAB_LIFECYCLE received browser use session route capture"
-                : "window_context";
-          const allowed = new Set([
-            "active",
-            "conversationId",
-            "rendererWindowAppearance",
-            "rendererWindowId",
-            "rendererWindowVisible",
-            "windowId",
-            "ownerRoutePath",
-          ]);
-          const fields = [
-            ...line.matchAll(/\b([A-Za-z][A-Za-z0-9]*)=([^\s]+)/g),
-          ]
-            .filter((match) => allowed.has(match[1]))
-            .map((match) => `${match[1]}=${match[2]}`);
-          events.push(`${line.slice(0, 24)} ${eventName} ${fields.join(" ")}`);
-        }
-      }
-    } finally {
-      lines.close();
-      input.destroy();
-    }
-  }
+  for (const { file, info } of current)
+    for (const event of await cachedNavigationEvents(file, info))
+      events.push(event);
   events.sort((a, b) => a.slice(0, 24).localeCompare(b.slice(0, 24)));
   return activeConversation(
     events.join("\n"),
